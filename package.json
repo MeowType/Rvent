@@ -4,12 +4,17 @@
   "description": "",
   "main": "rvent.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test:web:dev": "rollup -c rollup.config.test.js -w"
   },
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@types/rollup-plugin-commonjs": "^9.3.1",
+    "@types/rollup-plugin-node-resolve": "^4.1.0",
     "rollup": "^1.32.1",
+    "rollup-plugin-commonjs": "^10.1.0",
+    "rollup-plugin-node-resolve": "^5.2.0",
+    "rollup-plugin-typescript2": "^0.26.0",
     "typescript": "^3.8.3"
   }
 }

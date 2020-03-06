@@ -1,3 +1,5 @@
 node_modules/
 tsout/
 type/
+test/*.js
+test/*.js.map

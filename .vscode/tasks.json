@@ -11,6 +11,11 @@
                 "$tsc-watch"
             ],
             "group": "build"
+        },
+        {
+            "type": "npm",
+            "script": "test:web:dev",
+            "problemMatcher": []
         }
     ]
 }
