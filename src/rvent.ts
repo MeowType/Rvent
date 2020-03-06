@@ -4,12 +4,13 @@ export { delay, Void } from './utils'
 export type { VNU, Awaitable } from './utils'
 
 export type SubscriptionStatus = 'normal' | 'stop'
-export type SubscriberFn<A> = (a: A, s: SubscriptionStatus) => Awaitable<void>
+export type SubscriberFn<A> = (a: A) => Awaitable<void>
+export type SubscriberStopFn<A> = (a: A, s: SubscriptionStatus) => Awaitable<void>
 
 const _oninit = Symbol('init')
 
 export class Rvent<A = any> {
-    subscribers = new Set<SubscriberFn<A>>()
+    subscribers = new Set<SubscriberStopFn<A>>()
     
     private last: A = void 0 as any
     async emit(a: A) {
@@ -22,7 +23,9 @@ export class Rvent<A = any> {
         this.subscribers.clear()
     }
 
-    unGet(fn: SubscriberFn<A>): this {
+    unGet(fn: SubscriberFn<A>): this
+    unGet(fn: SubscriberStopFn<A>): this
+    unGet(fn: SubscriberFn<A> | SubscriberStopFn<A>): this {
         this.subscribers.delete(fn)
         return this
     }
@@ -38,29 +41,69 @@ export class Rvent<A = any> {
                 }
             })()
         } else {
+            this.subscribers.add((v, s) => s === 'stop' ? void 0 : fn(v))
+            return this
+        }
+    }
+    getStop(): AsyncIterable<A>
+    getStop(fn: SubscriberStopFn<A>): this
+    getStop(fn?: SubscriberStopFn<A>): this | AsyncIterable<A> {
+        const self = this
+        if (fn == null) {
+            return (async function* () {
+                while (true) {
+                    const r = await self.getStopOnce()
+                    if (r.done) return
+                    yield r.value
+                }
+            })()
+        } else {
             this.subscribers.add(fn)
             return this
         }
     }
     getOnce(): Promise<A>
-    getOnce(fn: (a: A, s: SubscriptionStatus) => Promise<void>): this
-    getOnce(fn: (a: A, s: SubscriptionStatus) => void): this
+    getOnce(fn: SubscriberFn<A>): this
     getOnce(fn?: SubscriberFn<A>): this | Promise<A>
     getOnce(fn?: SubscriberFn<A>): this | Promise<A> {
         if (fn == null) {
             return new Promise(res => {
                 const f: SubscriberFn<A> = ((a: A) => {
-                    this.subscribers.delete(f)
+                    this.unGet(f)
                     res(a)
                 })
-                this.subscribers.add(f)
+                this.get(f)
             })
         } else {
-            const f: SubscriberFn<A> = (a, s) => {
-                this.subscribers.delete(f)
+            const f: SubscriberFn<A> = (a) => {
+                this.unGet(f)
+                return fn(a)
+            }
+            this.get(f)
+            return this
+        }
+    }
+    getStopOnce(): Promise<{ done: boolean, value: A }>
+    getStopOnce(fn: SubscriberStopFn<A>): this
+    getStopOnce(fn?: SubscriberStopFn<A>): this | Promise<{ done: boolean, value: A }>
+    getStopOnce(fn?: SubscriberStopFn<A>): this | Promise<{ done: boolean, value: A }> {
+        if (fn == null) {
+            return new Promise(res => {
+                const f: SubscriberStopFn<A> = ((a: A, s) => {
+                    this.unGet(f)
+                    res({
+                        done: s === 'stop',
+                        value: a
+                    })
+                })
+                this.getStop(f)
+            })
+        } else {
+            const f: SubscriberStopFn<A> = (a, s) => {
+                this.unGet(f)
                 return fn(a, s)
             }
-            this.subscribers.add(f)
+            this.getStop(f)
             return this
         }
     }
@@ -131,7 +174,7 @@ export class Rvent<A = any> {
                 return
             }
         }
-        this.get(reg)
+        this.getStop(reg)
         return nr
     }
 

@@ -1,10 +1,11 @@
-import { Rvent, pass, skip, wait, using, fold } from '../rvent'
+import { Rvent, stop, pass, skip, wait, using, fold } from '../rvent'
 
 const click = new Rvent<MouseEvent>()
-document.addEventListener('click', click.emit)
+document.addEventListener('click', e => click.emit(e))
 
 click
-    .skip(5)
+    //.skip(5)
+    .do(() => stop)
     .fold(0, (acc) => acc + 1)
     
     .get((e) => {
