@@ -1,12 +1,16 @@
-import { Rvent, stop, pass, skip, wait, using, fold } from '../rvent'
+import { Rvent, stop, pass, skip, wait, using, fold, move } from '../rvent'
 
 const click = new Rvent<MouseEvent>()
 document.addEventListener('click', e => click.emit(e))
 
+const key = new Rvent<KeyboardEvent>()
+document.addEventListener('keypress', e => key.emit(e))
+
 click
-    //.skip(5)
-    .do(() => stop)
-    .fold(0, (acc) => acc + 1)
+    .get((e) => {
+        console.log(e)
+    })
+    .do(() => move(key))
     
     .get((e) => {
         console.log(e)

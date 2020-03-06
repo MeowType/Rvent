@@ -153,6 +153,7 @@ export class Rvent<A = any> {
     do(fn: (v: A, s: SubscriptionStatus) => Awaitable<VNU | Flow>): Rvent<unknown>
     do(fn: (v: A, s: SubscriptionStatus) => Awaitable<VNU | Flow>): Rvent {
         const nr = new Rvent
+        let self: Rvent = this
         const reg = async (v: A, s: SubscriptionStatus) => {
             const flow = await fn(v, s)
 
@@ -163,9 +164,21 @@ export class Rvent<A = any> {
                 nr.emit(v)
             } else if (flow.type === 'stop') {
                 nr.stop()
-                this.unGet(reg)
+                self.unGet(reg)
             } else if (flow.type === 'next') {
                 nr.emit(flow.val)
+            } else if (flow.type === 'move') {
+                self.unGet(reg)
+                self = flow.target
+                const nreg = (v: A, s: SubscriptionStatus) => {
+                    nr.emit(v)
+                    if (s == 'stop') {
+                        nr.stop()
+                        return
+                    }
+                }
+                self.unGet(nreg)
+                flow.target.getStop(nreg)
             } else {
                 throw 'Unknown value'
             }
@@ -368,25 +381,29 @@ export class Rvent<A = any> {
 
 export type NoPassFlow = typeof skip | typeof stop 
 export type BaseFlow = typeof pass | NoPassFlow
-export type Flow = BaseFlow | Next<any>
+export type Flow = BaseFlow | Next<any> | Move<any>
 
+export function next<R>(val: R): Next<R> {
+    return { type: 'next', val } as const
+}
+export function move<R>(target: Rvent<R>): Move<R> {
+    return { type: 'move', target } as const
+}
+export type Next<R> = { type: 'next', val: R }
+export type Move<R> = { type: 'move', target: Rvent<R> }
+export type NextFlow<R> = Next<R> | Move<R> | NoPassFlow
 
 export const pass = { type: 'pass'} as const
 export function skip(count: number) {
-    return {
+    return use<any, number>()({
         init: 0,
         state: (s: number) => using(s + 1, (ns) => s >= count ? [s, pass] as const : [ns, skip] as const)
-    }
+    })
 }
 export namespace skip {
     export const type = 'skip'
 }
 export const stop = { type: 'stop' } as const
-export function next<R>(val: R): Next<R> {
-    return { type: 'next', val } as const
-}
-export type Next<R> = { type: 'next', val: R }
-export type NextFlow<R> = Next<R> | NoPassFlow
 
 export function use<A, S, R>(): <O extends { init: S, state: (state: S, v: A, s: SubscriptionStatus) => Awaitable<readonly [S, VNU | NextFlow<R>] | readonly [S]> }>(o: O) => O
 export function use<A, R>(): <O extends
