@@ -26,3 +26,6 @@ export type Awaitable<T> = T | Promise<T>
 export const Void: void = null as any
 export type VNU = void | null | undefined
 
+export function using<S, R>(s: S, fn: (s: S) => R) {
+    return fn(s)
+}

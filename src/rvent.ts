@@ -1,6 +1,6 @@
-import { map, delay, hasKey } from "./utils"
+import { map, delay, hasKey, using } from "./utils"
 import type { Awaitable, VNU } from './utils'
-export { delay, Void } from './utils'
+export { delay, Void, using } from './utils'
 export type { VNU, Awaitable } from './utils'
 
 export type SubscriptionStatus = 'normal' | 'stop'
@@ -156,11 +156,11 @@ export class Rvent<A = any> {
         const reg = async (v: A, s: SubscriptionStatus) => {
             const flow = await fn(v, s)
 
-            if (flow == null || flow.type === 'pass') {
-                nr.emit(v)
-            } else if (flow.type === 'skip') {
+            if (flow == null || flow.type === 'skip') {
                 if (s == 'stop') nr.stop()
                 return
+            } else if (flow.type === 'pass') {
+                nr.emit(v)
             } else if (flow.type === 'stop') {
                 nr.stop()
                 this.unGet(reg)
@@ -242,10 +242,134 @@ export class Rvent<A = any> {
             }
         })
     }
+
+    gate(signal: Rvent, not?: boolean): Rvent<A>
+    gate(signal: Promise<void>, not?: boolean): Rvent<A>
+    gate(signal: Rvent | Promise<void>, not?: boolean): Rvent<A> {
+        if (signal instanceof Rvent) return this.effect(() => {
+            let wait = !not
+            const set = () => {
+                wait = false
+            }
+            signal.get(set)
+            return (_, s) => {
+                if (s === 'stop') {
+                    signal.unGet(set)
+                }
+                if (wait) {
+                    return not ? pass : skip
+                } else {
+                    wait = true
+                    return not ? skip: pass
+                }
+            }
+        })
+        return this.effect(() => {
+            let wait = !not
+            signal.then(() => wait = false)
+            return () => {
+                return wait ? not ? pass : skip : not ? skip : pass
+            }
+        })
+    }
+
+    buffer(count: number): Rvent<A[]> {
+        if (count < 1) throw new RangeError('count must be >= 1')
+        return this.effect<A[]>(() => {
+            let buffer: A[] = []
+            return (v) => {
+                buffer.push(v)
+                if (buffer.length >= count) {
+                    let ob = buffer
+                    buffer = []
+                    return next(ob)
+                }
+                return skip
+            }
+        })
+    }
+
+    /** default is `true`, R to set `false`, S to set `true`  */
+    latch(R: Rvent, S: Rvent, not?: boolean) {
+        return this.effect(() => {
+            let wait = !not
+            const setF = () => {
+                wait = false
+            }
+            const setT = () => {
+                wait = true
+            }
+            R.get(setF)
+            S.get(setT)
+            return (_, s) => {
+                if (s === 'stop') {
+                    R.unGet(setF)
+                    S.unGet(setT)
+                }
+                if (wait) {
+                    return not ? pass : skip
+                } else {
+                    return not ? skip : pass
+                }
+            }
+        })
+    }
+
+    DFlipFlop(D: Rvent<boolean>, not?: boolean): Rvent<A>
+    DFlipFlop(D: Rvent<boolean>, C: Rvent, not?: boolean): Rvent<A>
+    DFlipFlop(D: Rvent<boolean>, C?: Rvent | boolean, not?: boolean) {
+        if (typeof C === 'boolean' || C == null) {
+            not = C ?? not
+            return this.effect(() => {
+                let wait = !not
+                const set = (v: boolean) => {
+                    wait = v
+                }
+                D.get(set)
+                return (_, s) => {
+                    if (s === 'stop') {
+                        D.unGet(set)
+                    }
+                    if (wait) {
+                        return not ? pass : skip
+                    } else {
+                        return not ? skip : pass
+                    }
+                }
+            })
+        }
+        return this.effect(() => {
+            let wait = !not
+            let canSet = false
+            const set = (v: boolean) => {
+                if (!canSet) return
+                wait = v
+                canSet = false
+            }
+            const setC = () => {
+                canSet = true
+            }
+            D.get(set)
+            C.get(setC)
+            return (_, s) => {
+                if (s === 'stop') {
+                    D.unGet(set)
+                    C.unGet(setC)
+                }
+                if (wait) {
+                    return not ? pass : skip
+                } else {
+                    return not ? skip : pass
+                }
+            }
+        })
+    }
 }
 
-export type BaseFlow = typeof pass | typeof skip | typeof stop 
-export type Flow = BaseFlow | { type: 'next', val: any[] }
+export type NoPassFlow = typeof skip | typeof stop 
+export type BaseFlow = typeof pass | NoPassFlow
+export type Flow = BaseFlow | Next<any>
+
 
 export const pass = { type: 'pass'} as const
 export function skip(count: number) {
@@ -262,19 +386,30 @@ export function next<R>(val: R): Next<R> {
     return { type: 'next', val } as const
 }
 export type Next<R> = { type: 'next', val: R }
-export type NextFlow<R> = Next<R> | BaseFlow
+export type NextFlow<R> = Next<R> | NoPassFlow
 
-
-export function wait(time: number) {
-    return { do: () => delay(time)}
+export function use<A, S, R>(): <O extends { init: S, state: (state: S, v: A, s: SubscriptionStatus) => Awaitable<readonly [S, VNU | NextFlow<R>] | readonly [S]> }>(o: O) => O
+export function use<A, R>(): <O extends
+    { do: (v: A, s: SubscriptionStatus) => Awaitable<VNU | NextFlow<R>> }
+    | (() => (v: A, s: SubscriptionStatus) => Awaitable<VNU | NextFlow<R>>)
+    | { effect: () => (v: A, s: SubscriptionStatus) => Awaitable<VNU | NextFlow<R>> }
+    | { init: R, state: (state: R, v: A, s: SubscriptionStatus) => Awaitable<readonly [R, VNU | BaseFlow] | readonly [R]> }
+    >(o: O) => O
+export function use<A>(): <O extends
+    { effect: () => (v: A, s: SubscriptionStatus) => Awaitable<VNU | BaseFlow> }
+    | { do: (v: A, s: SubscriptionStatus) => Awaitable<VNU | BaseFlow> }
+    | (() => (v: A, s: SubscriptionStatus) => Awaitable<VNU | BaseFlow>)
+    >(o: O) => O
+export function use(): any {
+    return (v: any) => v
 }
 
-export function using<S, R>(s: S, fn: (s: S) => R) {
-    return fn(s)
+export function wait(time: number) {
+    return use<any>()({ do: () => delay(time) })
 }
 
 export function fold<A, R>(init: R, fn: (acc: R, v: A) => R) {
-    return {
+    return use<A, R, R>()({
         init,
         state: (state: R, v: A, s: SubscriptionStatus) => {
             const nv = fn(state, v)
@@ -284,5 +419,5 @@ export function fold<A, R>(init: R, fn: (acc: R, v: A) => R) {
                 return [nv, skip] as const
             }
         }
-    }
+    })
 }
